@@ -1,0 +1,18 @@
+[Unit]
+Description=Manus Investment Bot
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Investment-bot
+ExecStart=/usr/bin/python3 run.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/Investment-bot/data/bot_stdout.log
+StandardError=append:/home/ubuntu/Investment-bot/data/bot_stderr.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

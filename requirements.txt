@@ -1,0 +1,13 @@
+# Core
+python-telegram-bot==21.5
+openai>=1.30.0
+
+# Data Collection
+yfinance>=0.2.40
+feedparser>=6.0.0
+beautifulsoup4>=4.12.0
+numpy>=1.24.0
+
+# Utilities
+pytz>=2024.1
+python-dotenv>=1.0.0
