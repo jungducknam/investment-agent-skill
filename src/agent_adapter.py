@@ -14,6 +14,30 @@ from .position_tracker import calc_pnl, rule_based_judge
 from .report_engine import build_report_prompt, collect_realtime_data
 
 
+AGENT_REPORT_OUTPUT_INSTRUCTIONS = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧾 에이전트 출력 형식
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+위 데이터와 규칙을 바탕으로 사람이 읽을 수 있는 한국어 Markdown 리포트를 작성하세요.
+
+원시 JSON만 출력하지 마세요. 일반 사용자가 바로 읽을 수 있어야 합니다.
+내부적으로 JSON 스키마 항목을 참고하되, 최종 답변은 아래 순서의 텍스트 리포트로 변환하세요.
+
+필수 섹션:
+1. 한 줄 결론: 오늘 시장을 한 문장으로 요약
+2. 시장 현황: 한국/미국 지수, 환율, 금리, VIX, 유가 흐름
+3. 핵심 테마와 섹터: 강한 섹터와 약한 섹터를 구분
+4. 진입 가능 후보: 진입 시그널이 적정인 종목과 근거
+5. 대기/추격 금지 후보: 과열 종목, 조정 대기 가격, 이유
+6. 포트폴리오 전략: 현금 비중, 장기/스윙/단타 접근
+7. 주요 리스크: FOMC, CPI, 환율, 데이터 누락 등
+8. 데이터 품질 주의: 비어 있거나 이상해 보이는 데이터 명시
+9. 면책 문구: 투자 판단은 사용자 책임
+
+표를 적극적으로 사용하고, 가격/등락률/RSI/BB/목표가 같은 수치는 가능한 한 그대로 보여주세요.
+"""
+
+
 def _request(
     task: str,
     system_prompt: str,
@@ -44,12 +68,13 @@ def build_report_request(
     """
     data = context if context is not None else (collect_realtime_data() if collect else {})
     system_prompt, user_prompt = build_report_prompt(data)
+    user_prompt = f"{user_prompt}\n{AGENT_REPORT_OUTPUT_INSTRUCTIONS}"
     return _request(
         "investment_report",
         system_prompt,
         user_prompt,
         data=data,
-        expected_output="Return the investment report as strict JSON following the schema in user_prompt.",
+        expected_output="Return a human-readable Korean Markdown investment report, not raw JSON.",
     )
 
 

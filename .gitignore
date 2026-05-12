@@ -6,3 +6,5 @@ data/
 *.db
 *.log
 .DS_Store
+agent-report-request-*.json
+agent-report-request-*.summary.md

@@ -49,7 +49,9 @@ class AgentAdapterTests(unittest.TestCase):
         self.assertEqual(request["task"], "investment_report")
         self.assertIn("system_prompt", request)
         self.assertIn("user_prompt", request)
-        self.assertIn("JSON 투자 리포트", request["user_prompt"])
+        self.assertIn("사람이 읽을 수 있는 한국어 Markdown 리포트", request["user_prompt"])
+        self.assertIn("원시 JSON만 출력하지 마세요", request["user_prompt"])
+        self.assertNotIn("strict JSON", request["expected_output"])
         self.assertIn("삼성전자", request["user_prompt"])
         self.assertEqual(request["data"]["collected_at"], SAMPLE_CONTEXT["collected_at"])
 

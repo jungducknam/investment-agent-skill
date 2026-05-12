@@ -123,7 +123,7 @@ sudo systemctl status investment-bot
 
 Use this mode when the AI runtime is outside this repository. Codex, Manus, OpenAI Agents SDK, or another agent calls this package only when the user asks for analysis. The package does not start Telegram, does not run a scheduler, and does not need Telegram credentials.
 
-In this mode, the repository acts as a data and prompt builder. The outer agent receives a payload and uses its own model to produce the final answer.
+In this mode, the repository acts as a data and prompt builder. The outer agent receives a machine-readable payload, but the final user-facing answer must be a human-readable Markdown report, not raw JSON.
 
 ### Requirements
 
@@ -148,6 +148,16 @@ Build a report request:
 scripts/build_agent_request.py report
 ```
 
+Use the skill-style command phrase in Codex or another agent runtime:
+
+```text
+/investment-skill 금일 리포트 작성
+/investment-skill 오늘 반도체 섹터 어때?
+/investment-skill 포지션 점검 NVIDIA 100달러 2주 보유
+```
+
+The repository treats `/investment-skill` as an explicit trigger phrase in `SKILL.md`. If a runtime only supports skill names, use `$investment-skill` with the same request text.
+
 Build a report request without live data collection:
 
 ```bash
@@ -170,7 +180,7 @@ scripts/build_agent_request.py position \
 
 ### Agent Payload Shape
 
-The command returns JSON:
+The command returns JSON because agents and tools need a structured handoff format:
 
 ```json
 {
@@ -189,6 +199,19 @@ The outer agent should:
 2. Read `user_prompt`.
 3. Use `data` as supporting context if needed.
 4. Generate the final report, chat answer, or position review with its own model.
+5. Show the user a readable Markdown answer. Do not show the raw JSON payload unless the user explicitly asks for it.
+
+For `investment_report`, the generated prompt explicitly asks for a Korean Markdown report with:
+
+- one-line conclusion
+- market overview
+- sector/theme summary
+- entry candidates
+- wait/do-not-chase candidates
+- portfolio strategy
+- key risks
+- data-quality notes
+- investment disclaimer
 
 ### Python Usage
 
@@ -223,7 +246,7 @@ agent = Agent(
 1. User asks the outer agent for a report, position review, or market question.
 2. The outer agent calls `scripts/build_agent_request.py` or functions in `src/agent_adapter.py`.
 3. The package collects data if needed and builds prompts.
-4. The outer agent uses its own model to produce the final answer.
+4. The outer agent uses its own model to produce the final readable Markdown answer.
 5. No Telegram process, bot token, or long-running service is involved.
 
 ## Architecture
@@ -390,7 +413,7 @@ sudo systemctl status investment-bot
 
 이 방식은 실제 AI 런타임이 저장소 밖에 있을 때 사용합니다. Codex, Manus, OpenAI Agents SDK, 다른 에이전트가 사용자의 명령이 들어온 순간 이 패키지를 호출합니다. 이 방식은 텔레그램을 시작하지 않고, 스케줄러도 돌리지 않으며, 텔레그램 토큰도 필요 없습니다.
 
-이 저장소는 데이터와 프롬프트를 만드는 역할만 합니다. 최종 리포트나 답변은 외부 에이전트가 자기 모델로 생성합니다.
+이 저장소는 데이터와 프롬프트를 만드는 역할만 합니다. 내부 전달은 JSON payload로 하지만, 사용자가 보는 최종 리포트나 답변은 외부 에이전트가 사람이 읽을 수 있는 Markdown 텍스트로 생성해야 합니다.
 
 ### 필요 조건
 
@@ -415,6 +438,16 @@ pip install -r requirements.txt
 scripts/build_agent_request.py report
 ```
 
+Codex나 다른 에이전트 런타임에서는 스킬식 명령 문구로 호출할 수 있습니다.
+
+```text
+/investment-skill 금일 리포트 작성
+/investment-skill 오늘 반도체 섹터 어때?
+/investment-skill 포지션 점검 NVIDIA 100달러 2주 보유
+```
+
+이 저장소의 `SKILL.md`는 `/investment-skill`을 명시적 트리거 문구로 취급합니다. 사용하는 런타임이 스킬 이름 호출만 지원한다면 같은 요청을 `$investment-skill` 뒤에 붙여 쓰면 됩니다.
+
 실시간 데이터 수집 없이 프롬프트 껍데기만 생성:
 
 ```bash
@@ -437,7 +470,7 @@ scripts/build_agent_request.py position \
 
 ### 에이전트 payload 구조
 
-명령은 JSON을 반환합니다.
+명령은 JSON을 반환합니다. 이 JSON은 사람이 읽으라는 결과물이 아니라, 에이전트와 도구 사이의 구조화된 전달 형식입니다.
 
 ```json
 {
@@ -456,6 +489,19 @@ scripts/build_agent_request.py position \
 2. `user_prompt`를 읽습니다.
 3. 필요하면 `data`를 근거 데이터로 사용합니다.
 4. 자기 모델로 최종 리포트, 자유 답변, 포지션 리뷰를 생성합니다.
+5. 사용자에게는 원시 JSON이 아니라 사람이 읽을 수 있는 Markdown 답변을 보여줍니다.
+
+`investment_report` 요청의 프롬프트는 최종 출력을 한국어 Markdown 리포트로 만들도록 지시합니다. 포함해야 하는 섹션은 다음과 같습니다.
+
+- 한 줄 결론
+- 시장 현황
+- 섹터/테마 요약
+- 진입 가능 후보
+- 대기/추격 금지 후보
+- 포트폴리오 전략
+- 주요 리스크
+- 데이터 품질 주의
+- 투자 판단 책임 면책
 
 ### Python 사용 예시
 
@@ -490,7 +536,7 @@ agent = Agent(
 1. 사용자가 외부 에이전트에게 리포트, 포지션 리뷰, 시장 질문을 요청합니다.
 2. 외부 에이전트가 `scripts/build_agent_request.py` 또는 `src/agent_adapter.py` 함수를 호출합니다.
 3. 이 패키지가 필요한 경우 시장 데이터를 수집하고 프롬프트를 만듭니다.
-4. 외부 에이전트가 자기 모델로 최종 답변을 생성합니다.
+4. 외부 에이전트가 자기 모델로 사람이 읽을 수 있는 Markdown 답변을 생성합니다.
 5. 텔레그램 프로세스, 봇 토큰, 장기 실행 서비스는 사용하지 않습니다.
 
 ## 아키텍처

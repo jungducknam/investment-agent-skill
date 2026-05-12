@@ -1,11 +1,27 @@
 ---
 name: investment-agent
-description: Investment analysis skill for two modes: a standalone Telegram bot using API keys, or an on-demand Codex/Agent AI workflow that builds market-analysis prompts when the user asks. Use for daily investment reports, position reviews, entry timing checks, and Korean/US market analysis.
+description: Use when the user invokes /investment-agent, $investment-agent, /investment-skill, or $investment-skill, or asks for daily investment reports, position reviews, entry timing checks, or Korean/US market analysis through Codex or another agent runtime.
 ---
 
 # Investment Agent Skill
 
 This skill supports two deployment styles. Pick one based on the user's intent.
+
+## Command Invocation
+
+Treat `/investment-agent` as the primary explicit invocation alias. The text after the command is the user request. Also support `$investment-agent`, `/investment-skill`, and `$investment-skill` as aliases.
+
+Default to Mode B for command-style invocations unless the user explicitly asks to run a Telegram bot, background service, scheduler, server, or deployment.
+
+Command routing:
+
+- `/investment-agent 금일 리포트 작성`, `/investment-agent 오늘 리포트`, `/investment-agent daily report`: run `scripts/build_agent_request.py report`.
+- `/investment-agent 오늘 반도체 섹터 어때?`, stock/sector/macro questions, or general investment questions: run `scripts/build_agent_request.py chat "<request without the command prefix>"`.
+- `/investment-agent 포지션 점검 ...`: if the user provides complete position JSON or enough fields to build it, run `scripts/build_agent_request.py position --position-json '<json>'`; otherwise ask for the missing ticker, market, entry price, quantity, direction, and current price if needed.
+
+When using Mode B, read the returned JSON payload and use its `system_prompt`, `user_prompt`, and `data` as context for the final answer. The payload is an internal handoff format, not the user-facing result. Do not expose the raw payload unless the user asks for it.
+
+For report requests, produce a human-readable Korean Markdown report. Do not answer with raw JSON. Include a one-line conclusion, market overview, sector/theme summary, entry candidates, wait/do-not-chase candidates, portfolio strategy, key risks, data-quality notes, and an investment disclaimer.
 
 ## Mode A: Standalone Telegram System
 
