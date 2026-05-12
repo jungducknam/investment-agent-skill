@@ -6,9 +6,13 @@
 
 The entry point for the Telegram bot, built on `python-telegram-bot` (v20+) with a fully async architecture using `ApplicationBuilder`. It handles user commands (`/start`, inline keyboard buttons), manages background monitoring loops via `asyncio.create_task`, and uses `drop_pending_updates=True` to prevent message floods after restarts. The httpx/httpcore log levels are suppressed to WARNING to avoid token leakage in logs.
 
+### agent_adapter.py — On-Demand Agent Interface
+
+Builds request payloads for Codex, OpenAI Agents SDK, Manus, or another outer agent. It does not start Telegram, does not require Telegram credentials, and does not call an AI API directly. Instead it returns `system_prompt`, `user_prompt`, and supporting data so the outer agent can answer with its own model when the user issues a command.
+
 ### report_engine.py — Report Generation
 
-The report engine collects market data from all sources in parallel using `ThreadPoolExecutor` (5 workers), then constructs an enriched prompt containing index prices, sector momentum, news themes, economic calendar, Yahoo Finance insights, and entry timing signals. It calls the AI model (gemini-2.5-flash by default) with a structured system prompt that enforces anti-chase rules and regime-aware allocation, then parses the JSON response for formatting.
+The report engine collects market data from all sources in parallel using `ThreadPoolExecutor`, then constructs an enriched prompt containing index prices, sector momentum, news themes, economic calendar, Yahoo Finance insights, and entry timing signals. Telegram mode calls the configured AI model and parses the JSON response. Agent mode reuses the same prompt builder and lets the outer agent produce the answer.
 
 ### momentum_inflection.py — 6-Phase Momentum Detection
 
@@ -48,7 +52,7 @@ Manages the local SQLite database with WAL mode enabled for concurrent read/writ
 
 ### ai_client.py — AI API Client
 
-The sole module that makes external AI API calls. Provides functions for report generation, position judgment, and general Q&A. Designed to be model-agnostic — switching models requires only changing the model parameter.
+The sole module that makes external AI API calls in Telegram mode. It also exposes prompt builders so Agent mode can reuse the same instructions without calling the configured API key.
 
 ### monitor.py — Position Monitoring
 

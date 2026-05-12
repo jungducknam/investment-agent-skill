@@ -1,77 +1,66 @@
 ---
 name: investment-agent
-description: Autonomous investment agent with momentum inflection detection, market regime classification, and Telegram bot integration. Use when building or operating an AI-powered investment advisory system that generates daily reports, monitors positions, and delivers insights via Telegram.
+description: Investment analysis skill for two modes: a standalone Telegram bot using API keys, or an on-demand Codex/Agent AI workflow that builds market-analysis prompts when the user asks. Use for daily investment reports, position reviews, entry timing checks, and Korean/US market analysis.
 ---
 
 # Investment Agent Skill
 
-An autonomous investment advisory system that combines real-time market data collection, momentum inflection detection, market regime classification, and AI-powered analysis to deliver actionable investment insights via Telegram.
+This skill supports two deployment styles. Pick one based on the user's intent.
 
-## Architecture Overview
+## Mode A: Standalone Telegram System
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Telegram Bot (bot.py)                                  │
-│  ├── User commands (report, position, check)            │
-│  └── Scheduled notifications                            │
-├─────────────────────────────────────────────────────────┤
-│  Report Engine (report_engine.py)                       │
-│  ├── Collects all data in parallel                      │
-│  └── Calls AI with enriched prompt                      │
-├─────────────────────────────────────────────────────────┤
-│  Analysis Engines                                       │
-│  ├── momentum_inflection.py (6-phase detection)         │
-│  ├── market_regime.py       (bull/bear/sideways)        │
-│  └── entry_filter.py        (RSI/BB/Volume filter)      │
-├─────────────────────────────────────────────────────────┤
-│  Data Layer                                             │
-│  ├── data_market.py   (indices, stocks, sectors)        │
-│  ├── data_news.py     (RSS feeds, theme extraction)     │
-│  ├── data_calendar.py (economic events)                 │
-│  ├── data_yahoo.py    (deep stock insights)             │
-│  └── database.py      (SQLite with WAL mode)            │
-└─────────────────────────────────────────────────────────┘
-```
+Use this when the user wants a 24/7 bot server.
 
-## Core Concepts
+- Requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and an OpenAI-compatible `OPENAI_API_KEY`.
+- Runs `python run.py` or the systemd service template.
+- Telegram is the UI. The bot collects data, calls the configured AI API, stores reports/positions locally, and sends replies or alerts.
+- Entry point: `src/bot.py`.
+- AI API entry point: `src/ai_client.py`.
 
-### 1. Momentum Inflection Detection (6 Phases)
-
-Tracks Rate of Change (ROC) and its derivative (acceleration):
-
-| Phase | Condition | Signal |
-|-------|-----------|--------|
-| Accelerating Up | momentum > 0, slope > +0.3 | HOLD |
-| Decelerating Up | momentum > 0, slope < -0.3 | PREPARE EXIT |
-| Peak | momentum > 0, slope flips +→- | TAKE PROFIT |
-| Accelerating Down | momentum < 0, slope < -0.3 | AVOID |
-| Decelerating Down | momentum < 0, slope > +0.3 | PREPARE ENTRY |
-| Trough | momentum < 0, slope flips -→+ | BUY |
-
-### 2. Market Regime Classification
-
-Composite score: KOSPI/NASDAQ trend + VIX + sector breadth + USD/KRW.
-Regimes: **Bull** (>15) / **Correction** (0~15) / **Sideways** (-15~0) / **Bear** (<-15)
-
-### 3. Entry Timing Filter
-
-Prevents chasing overheated stocks:
-- RSI (14-day): green 30-65 / yellow 65-75 / red >75
-- Bollinger Band position
-- Volume spike detection
-- ADX trend strength
-
-## Setup
+Setup:
 
 ```bash
-git clone https://github.com/jungducknam/investment-agent-skill.git
-cd investment-agent-skill
 cp templates/config/.env.example .env
 pip install -r requirements.txt
 python run.py
 ```
 
-## File Reference
+## Mode B: On-Demand Agent Command
 
-Read `references/module-guide.md` for detailed module documentation.
-Read `references/prompt-engineering.md` for AI prompt design patterns.
+Use this when Codex, OpenAI Agents SDK, Manus, or another agent runtime should act as the AI.
+
+- Does not require Telegram credentials.
+- Does not start a long-running scheduler or background automation.
+- Builds market context and prompts only when the user asks.
+- The outer agent should read the returned `system_prompt` and `user_prompt`, then answer with its own model.
+- Entry point: `src/agent_adapter.py`.
+- CLI helper: `scripts/build_agent_request.py`.
+
+Examples:
+
+```bash
+scripts/build_agent_request.py report
+scripts/build_agent_request.py chat "오늘 반도체 섹터 어때?"
+scripts/build_agent_request.py position --position-json '{"id":1,"name":"NVIDIA","ticker":"NVDA","market":"US","entry_price":100,"quantity":2,"currency":"USD","direction":"long"}' --current-price 112
+```
+
+Python:
+
+```python
+from src.agent_adapter import build_report_request
+
+request = build_report_request()
+# Send request["system_prompt"] and request["user_prompt"] to the outer agent model.
+```
+
+## Core Analysis Modules
+
+- `src/report_engine.py`: collects on-demand market data and builds reusable report prompts.
+- `src/momentum_inflection.py`: detects momentum phase and inflection quality.
+- `src/market_regime.py`: classifies Korean and US market regimes.
+- `src/entry_filter.py`: checks RSI, Bollinger Bands, volume, and ADX for entry timing.
+- `src/position_tracker.py`: parses and evaluates positions.
+
+This skill intentionally excludes periodic market-memory storage and scheduled momentum archiving. It is a lightweight on-demand analysis package, while Telegram mode remains available for users who want an independent bot.
+
+Read `references/module-guide.md` for module details and `references/prompt-engineering.md` for prompt rules.

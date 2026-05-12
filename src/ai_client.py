@@ -38,6 +38,21 @@ _CACHE_TTL_MIN = 30
 _AI_TRIGGER_PCT = 3.0
 
 
+def build_position_judge_prompt(pos: dict, current_price: float, pnl: dict) -> str:
+    """포지션 AI 판단용 프롬프트를 만든다."""
+    direction_kor = "롱" if pos.get("direction", "long") == "long" else "숏"
+    cs = pnl["cs"]
+    return (
+        f"{pos['name']}({pos['market']}) {direction_kor} "
+        f"진입{cs}{pos['entry_price']:,} 현재{cs}{current_price:,} "
+        f"손익{pnl['pnl_str']}\n"
+        'JSON만 답변: {"action":"홀딩|부분청산|전량청산",'
+        '"confidence":1~10,"reason":"1문장",'
+        '"target_price":숫자,"stop_loss":숫자,'
+        '"alert_level":"info|warning|urgent"}'
+    )
+
+
 def ai_position_judge(pos: dict, current_price: float, pnl: dict,
                       force: bool = False) -> dict:
     """
@@ -77,17 +92,7 @@ def ai_position_judge(pos: dict, current_price: float, pnl: dict,
         return rule_result
 
     # AI 호출
-    direction_kor = "롱" if pos.get("direction", "long") == "long" else "숏"
-    cs = pnl["cs"]
-    prompt = (
-        f"{pos['name']}({pos['market']}) {direction_kor} "
-        f"진입{cs}{pos['entry_price']:,} 현재{cs}{current_price:,} "
-        f"손익{pnl['pnl_str']}\n"
-        'JSON만 답변: {"action":"홀딩|부분청산|전량청산",'
-        '"confidence":1~10,"reason":"1문장",'
-        '"target_price":숫자,"stop_loss":숫자,'
-        '"alert_level":"info|warning|urgent"}'
-    )
+    prompt = build_position_judge_prompt(pos, current_price, pnl)
 
     try:
         client = get_client()
@@ -113,8 +118,8 @@ def ai_position_judge(pos: dict, current_price: float, pnl: dict,
     return result
 
 
-def ask_ai_question(question: str, context: str = "", yahoo_ctx: str = "") -> str:
-    """자유 질문 AI 답변"""
+def build_chat_prompt(question: str, context: str = "", yahoo_ctx: str = "") -> tuple[str, str]:
+    """자유 질문용 system/user 프롬프트를 만든다."""
     now_kst = datetime.now(KST).strftime("%Y년 %m월 %d일 %H:%M KST")
     system_prompt = f"""당신은 Manus Investment Agent입니다. 20년 경력의 글로벌 투자 전략가로서 한국(KOSPI/KOSDAQ)과 미국(NYSE/NASDAQ) 시장을 전문으로 분석합니다.
 
@@ -133,7 +138,13 @@ def ask_ai_question(question: str, context: str = "", yahoo_ctx: str = "") -> st
 
 ⚠️ 면책: 본 답변은 투자 참고용이며 최종 투자 판단은 투자자 본인 책임입니다."""
 
-    user_content = f"{context}{yahoo_ctx}\n\n질문: {question}" if context or yahoo_ctx else question
+    user_content = f"{context}{yahoo_ctx}\n\n질문: {question}" if context or yahoo_ctx else f"질문: {question}"
+    return system_prompt, user_content
+
+
+def ask_ai_question(question: str, context: str = "", yahoo_ctx: str = "") -> str:
+    """자유 질문 AI 답변"""
+    system_prompt, user_content = build_chat_prompt(question, context=context, yahoo_ctx=yahoo_ctx)
 
     try:
         client = get_client()

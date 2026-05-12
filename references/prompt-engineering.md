@@ -22,7 +22,7 @@ Korean and US markets are judged independently. US sector momentum is not direct
 
 ## User Prompt Structure
 
-The user prompt is constructed from collected data in the following order:
+The user prompt is constructed from collected data in the following order. In Telegram mode the local API client sends it to the configured model. In Agent command mode the prompt is returned to the outer agent, which should answer with its own model.
 
 1. **Market Indices**: Current prices with change percentages for all tracked indices (KOSPI, KOSDAQ, S&P500, NASDAQ, VIX, USD/KRW, US10Y, Brent, Gold)
 2. **Entry Timing Signals**: Per-stock RSI, Bollinger Band position, and composite signal
@@ -38,6 +38,6 @@ The user prompt is constructed from collected data in the following order:
 
 The AI returns structured JSON containing a market summary with overall sentiment and regime assessment, ranked stock recommendations with entry/target/stop prices and confidence levels, a waiting list of overheated stocks to monitor for pullback opportunities, and portfolio strategy guidance based on the current regime.
 
-## Model Selection
+## Runtime Selection
 
-The system currently uses `gemini-2.5-flash` for cost-efficiency with acceptable quality. The architecture is model-agnostic — switching to GPT-4.1 or other models requires only changing the model parameter in `report_engine.py`. The estimated cost per report generation is approximately $0.005-0.01.
+Telegram mode currently uses `gemini-2.5-flash` for reports and smaller GPT-class models for chat/position review through an OpenAI-compatible API. Agent command mode does not select a model inside this repository; Codex, OpenAI Agents SDK, Manus, or another outer agent receives the prompt payload and chooses the model/runtime itself.

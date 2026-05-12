@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## 🇬🇧 English
 
-An autonomous investment advisory system that combines real-time market data collection, momentum inflection detection, market regime classification, and AI-powered analysis to deliver actionable investment insights via Telegram.
+An investment advisory system that combines real-time market data collection, momentum inflection detection, market regime classification, and AI-ready prompt generation. It supports both a standalone Telegram bot and an on-demand Agent AI workflow.
 
 ### 🌟 Key Features
 
@@ -18,7 +18,8 @@ An autonomous investment advisory system that combines real-time market data col
 | **Entry Timing Filter** | Uses RSI, Bollinger Bands, Volume, and ADX to flag stocks as 🟢 Optimal, 🟡 Wait, or 🔴 Overheated |
 | **AI-Powered Reports** | Generates structured investment reports with entry/target/stop prices using enriched market context |
 | **Position Monitoring** | Tracks your positions in real-time and sends alerts when targets or stop-losses are hit |
-| **Telegram Integration** | Delivers daily briefings, alerts, and on-demand reports through a Telegram bot |
+| **Telegram Integration** | Delivers daily briefings, alerts, and on-demand reports through a standalone Telegram bot |
+| **Agent Command Mode** | Builds prompts and data payloads for Codex, OpenAI Agents SDK, Manus, or another agent to answer on demand |
 
 ### 🏗 Architecture
 
@@ -48,6 +49,8 @@ An autonomous investment advisory system that combines real-time market data col
 
 ### 🚀 Quick Start
 
+#### Option A — Standalone Telegram Bot
+
 ```bash
 git clone https://github.com/jungducknam/investment-agent-skill.git
 cd investment-agent-skill
@@ -57,14 +60,30 @@ pip install -r requirements.txt
 python run.py
 ```
 
+#### Option B — On-Demand Agent AI
+
+```bash
+git clone https://github.com/jungducknam/investment-agent-skill.git
+cd investment-agent-skill
+pip install -r requirements.txt
+
+# Build a report request for the outer agent model.
+scripts/build_agent_request.py report
+
+# Build a free-form investment question request.
+scripts/build_agent_request.py chat "How does the semiconductor sector look today?"
+```
+
+Agent mode does not require `TELEGRAM_BOT_TOKEN` or a long-running bot process. It creates the market context and prompts only when the user issues a command.
+
 ### ⚙️ Environment Variables
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather | Yes |
-| `TELEGRAM_CHAT_ID` | Your Telegram chat ID | Yes |
-| `OPENAI_API_KEY` | OpenAI-compatible API key | Yes |
-| `OPENAI_BASE_URL` | Custom API endpoint (optional) | No |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather | Telegram mode only |
+| `TELEGRAM_CHAT_ID` | Your Telegram chat ID | Telegram mode only |
+| `OPENAI_API_KEY` | OpenAI-compatible API key | Telegram mode only |
+| `OPENAI_BASE_URL` | Custom API endpoint | Optional |
 
 ### 🔧 Deployment (Systemd)
 
@@ -107,7 +126,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 <a name="korean"></a>
 ## 🇰🇷 한국어
 
-실시간 시장 데이터 수집, 모멘텀 변곡점 감지, 시장 레짐 분류, 그리고 AI 분석을 결합하여 텔레그램으로 실전 투자 인사이트를 제공하는 자율형 투자 에이전트 시스템입니다.
+실시간 시장 데이터 수집, 모멘텀 변곡점 감지, 시장 레짐 분류, 그리고 AI용 프롬프트 생성을 결합한 투자 에이전트 시스템입니다. 독립형 텔레그램 봇 방식과 에이전트 AI 명령형 방식을 모두 지원합니다.
 
 ### 🌟 핵심 기능
 
@@ -119,6 +138,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 | **AI 리포트 생성** | 풍부한 시장 컨텍스트를 기반으로 진입가/목표가/손절가가 포함된 구조화된 리포트 생성 |
 | **포지션 모니터링** | 등록된 포지션을 실시간 추적하여 목표가/손절가 도달 시 알림 |
 | **텔레그램 연동** | 매일 아침 브리핑, 장중 알림, 즉각적인 리포트를 텔레그램으로 전달 |
+| **에이전트 명령형 모드** | Codex, OpenAI Agents SDK, Manus 등 외부 에이전트가 명령 시점에 사용할 데이터와 프롬프트 생성 |
 
 ### 🏗 아키텍처
 
@@ -138,6 +158,8 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ### 🚀 시작하기
 
+#### 방식 A — 텔레그램 + API 키 독립 시스템
+
 ```bash
 git clone https://github.com/jungducknam/investment-agent-skill.git
 cd investment-agent-skill
@@ -146,6 +168,22 @@ cp templates/config/.env.example .env
 pip install -r requirements.txt
 python run.py
 ```
+
+#### 방식 B — 에이전트 AI 스킬 명령형
+
+```bash
+git clone https://github.com/jungducknam/investment-agent-skill.git
+cd investment-agent-skill
+pip install -r requirements.txt
+
+# 외부 에이전트가 읽을 리포트 요청 JSON 생성
+scripts/build_agent_request.py report
+
+# 자유 질문 요청 JSON 생성
+scripts/build_agent_request.py chat "오늘 반도체 섹터 어때?"
+```
+
+에이전트 명령형 방식은 텔레그램 토큰이나 상시 실행 봇이 필요 없습니다. 사용자가 명령할 때만 시장 데이터를 수집하고, 외부 에이전트가 자기 모델로 답변할 수 있는 `system_prompt`와 `user_prompt`를 만듭니다.
 
 ### 📖 모멘텀 변곡 판단 엔진 작동 원리
 

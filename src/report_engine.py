@@ -1,12 +1,9 @@
 """
-report_engine.py — 리포트 생성 엔진 (v2: 흐름 분석 통합)
+report_engine.py — 온디맨드 리포트 생성 엔진
 
-개선 사항:
-1. 축적된 스냅샷 데이터 기반 "연속적 흐름" 컨텍스트 전달
-2. 시장 레짐 판단 결과를 프롬프트에 포함
-3. 종목별 진입 적정도(RSI/BB/거래량) 필터 적용
-4. "모멘텀이 강하다 = 지금 사야 한다"는 오류 방지 지시문 추가
-5. 과매수 종목 추격매수 금지 규칙 명시
+텔레그램 독립 실행 모드에서는 이 모듈이 직접 AI API를 호출한다.
+에이전트 명령형 모드에서는 build_report_prompt()만 사용해 외부 에이전트가
+자기 모델로 최종 리포트를 생성한다.
 """
 import json
 import logging
@@ -238,6 +235,23 @@ def _fmt_entry_signals(entry_signals: dict) -> str:
     return "\n".join(lines)
 
 
+def _empty_report_context(extra_context: str = "") -> dict:
+    return {
+        "indices": {},
+        "stock_prices": {},
+        "sector_mom": {},
+        "stock_news": {},
+        "theme_news": {},
+        "headlines": [],
+        "calendar": {"economic_events": [], "earnings": []},
+        "yahoo_insights": {},
+        "yahoo_text": "",
+        "entry_signals": {},
+        "collected_at": datetime.now(KST).isoformat(),
+        "extra_context": extra_context,
+    }
+
+
 # ── 강화된 시스템 프롬프트 ────────────────────────────
 SYSTEM_PROMPT_V2 = """당신은 20년 경력의 글로벌 투자 전략가입니다.
 한국(KOSPI/KOSDAQ)과 미국(NYSE/NASDAQ) 시장을 전문으로 분석합니다.
@@ -284,6 +298,154 @@ SYSTEM_PROMPT_V2 = """당신은 20년 경력의 글로벌 투자 전략가입니
 - entry_condition: 즉시 매수 가능 조건 또는 "XX원 이하 조정 시 매수" 조건
 - momentum_quality: 1~100 (단순 수익률이 아닌 "건강한 모멘텀" 점수)
 """
+
+
+def build_report_user_prompt(ctx: dict, extra_context: str = "") -> str:
+    """수집된 데이터로 리포트 생성용 사용자 프롬프트를 만든다."""
+    ctx = {**_empty_report_context(), **(ctx or {})}
+    indices = ctx.get("indices", {})
+    calendar = ctx.get("calendar") or {"economic_events": [], "earnings": []}
+    theme_news = ctx.get("theme_news", {})
+    today_str = datetime.now(KST).strftime("%Y년 %m월 %d일")
+    extra = extra_context or ctx.get("extra_context", "")
+    extra_section = ""
+    if extra:
+        extra_section = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 추가 컨텍스트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{extra}
+"""
+
+    return f"""
+오늘 날짜: {today_str}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 실시간 주요 지수
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{_fmt_index(indices, 'KOSPI')}
+{_fmt_index(indices, 'KOSDAQ')}
+{_fmt_index(indices, 'SP500')}
+{_fmt_index(indices, 'NASDAQ')}
+{_fmt_index(indices, 'DOW')}
+VIX: {indices.get('VIX', {}).get('price', 'N/A')}
+USD/KRW: {indices.get('USD_KRW', {}).get('price', 'N/A')}
+미국 10년물: {indices.get('US10Y', {}).get('price', 'N/A')}%
+브렌트유: ${indices.get('BRENT', {}).get('price', 'N/A')}
+금: ${indices.get('GOLD', {}).get('price', 'N/A')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 종목별 진입 적정도 (기술적 필터 결과)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{_fmt_entry_signals(ctx.get('entry_signals', {}))}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 섹터 모멘텀
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{_fmt_sector(ctx.get('sector_mom', {}))}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📰 주요 헤드라인
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{chr(10).join('- ' + h for h in ctx.get('headlines', [])[:8]) or '헤드라인 없음'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏷️ 테마별 뉴스
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+반도체: {' / '.join(theme_news.get('반도체', [])[:3]) or '없음'}
+AI: {' / '.join(theme_news.get('AI', [])[:3]) or '없음'}
+피지컬AI: {' / '.join(theme_news.get('피지컬AI', [])[:2]) or '없음'}
+전력인프라: {' / '.join(theme_news.get('전력인프라', [])[:2]) or '없음'}
+방산: {' / '.join(theme_news.get('방산', [])[:2]) or '없음'}
+미중무역: {' / '.join(theme_news.get('미중무역', [])[:2]) or '없음'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📅 경제 이벤트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{chr(10).join('- ' + e for e in calendar.get('economic_events', [])[:6]) or '주요 이벤트 없음'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 종목 유니버스
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{_fmt_stock_universe(ctx.get('stock_prices', {}), ctx.get('stock_news', {})) or '종목 데이터 없음'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 Yahoo Finance 인사이트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{ctx.get('yahoo_text') or 'Yahoo 인사이트 없음'}
+{extra_section}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 지시사항
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+위 데이터 기반으로 JSON 투자 리포트를 생성하세요.
+
+중요:
+- 진입 적정도가 🔴(과열)인 종목은 추천하지 마세요. 🟢(적정) 우선, 🟡(대기)는 조건부.
+- 시장 레짐이 약세이면 해당 시장 종목 추천을 줄이세요.
+- 10개 종목 추천: 한국 5개 + 미국 5개 | 장기 3개 + 스윙 4개 + 단타 3개
+- 단, 과열 종목이 많으면 추천 수를 줄이고 "대기 종목"으로 분류하세요.
+
+JSON 형식:
+{{
+  "report_date": "{today_str}",
+  "market_summary": {{
+    "overall_sentiment": "강세/약세/중립",
+    "sentiment_score": 1~10,
+    "key_theme": "핵심 테마",
+    "macro_analysis": "매크로 분석",
+    "sector_rotation": "섹터 로테이션 분석",
+    "market_regime_kr": "한국 시장 레짐 판단",
+    "market_regime_us": "미국 시장 레짐 판단",
+    "flow_analysis": "온디맨드 데이터 기반 종합 판단",
+    "risk_factors": ["리스크1", "리스크2", "리스크3"]
+  }},
+  "recommendations": [
+    {{
+      "rank": 1, "name": "종목명", "ticker": "티커", "market": "KR/US",
+      "sector": "섹터", "currency": "KRW/USD", "style": "장기/스윙/단타",
+      "holding_period": "기간", "current_price": 숫자,
+      "entry_price": 숫자, "entry_signal": "적정/대기/과열",
+      "entry_condition": "즉시 매수 가능" 또는 "XX원 이하 조정 시 매수",
+      "target_price_1": 숫자, "target_price_2": 숫자,
+      "stop_loss": 숫자, "upside_pct": 숫자, "position_size_pct": 숫자,
+      "investment_rationale": ["근거1", "근거2", "근거3"],
+      "risk_factors": ["리스크1", "리스크2"],
+      "momentum_quality": 1~100,
+      "technical_status": "RSI/BB 상태 요약"
+    }}
+  ],
+  "waiting_list": [
+    {{
+      "name": "종목명", "ticker": "티커", "reason": "대기 사유",
+      "target_entry": 숫자, "condition": "진입 조건"
+    }}
+  ],
+  "portfolio_strategy": {{
+    "cash_reserve_pct": 숫자,
+    "regime_based_allocation": "레짐 기반 배분 설명",
+    "long_term_allocation": "설명",
+    "swing_strategy": "설명",
+    "daytrading_focus": "설명",
+    "overall_advice": "핵심 조언"
+  }},
+  "watchlist": ["종목1", "종목2", "종목3"]
+}}"""
+
+
+def build_report_prompt(context: dict | str | None = None) -> tuple[str, str]:
+    """AI 런타임이 달라도 재사용할 수 있는 리포트 프롬프트를 반환한다."""
+    if isinstance(context, dict):
+        ctx = context
+        extra_context = ""
+    elif isinstance(context, str):
+        ctx = _empty_report_context(context)
+        extra_context = context
+    elif context is None:
+        ctx = collect_realtime_data()
+        extra_context = ""
+    else:
+        raise TypeError("context must be dict, str, or None")
+    return SYSTEM_PROMPT_V2, build_report_user_prompt(ctx, extra_context=extra_context)
 
 
 def generate_investment_report() -> dict:
@@ -407,7 +569,8 @@ JSON 형식:
   "watchlist": ["종목1", "종목2", "종목3"]
 }}"""
 
-    # AI 호출
+    # AI 호출. 프롬프트 생성은 에이전트 명령형 모드와 공유한다.
+    system_prompt, user_prompt = build_report_prompt(ctx)
     from .ai_client import get_client
     client = get_client()
 
@@ -415,7 +578,7 @@ JSON 형식:
     resp = client.chat.completions.create(
         model="gemini-2.5-flash",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT_V2},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
@@ -431,10 +594,10 @@ JSON 형식:
     report = json.loads(raw)
     report["_meta"] = {
         "collected_at": ctx["collected_at"],
-        "data_source": "realtime+flow",
+        "data_source": "realtime",
         "version": "v2",
         "entry_signals_count": len(ctx["entry_signals"]),
-        "flow_data_available": bool(ctx["flow_summary"]),
+        "flow_data_available": bool(ctx.get("flow_summary")),
     }
     report["_indices"] = ctx["indices"]
     report["_events"] = ctx["calendar"].get("economic_events", []) + ctx["calendar"].get("earnings", [])
