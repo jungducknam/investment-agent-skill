@@ -1,7 +1,7 @@
 interface:
-  display_name: "Investment Agent"
+  display_name: "Investment Skill"
   short_description: "Korean and US investment analysis"
-  default_prompt: "Use $investment-agent to write today's Korean and US market investment report as a readable Markdown report."
+  default_prompt: "Use $investment-agent via /investment-skill to write today's Korean and US market investment report as a readable Markdown report."
 
 policy:
   allow_implicit_invocation: true
