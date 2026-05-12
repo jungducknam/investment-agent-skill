@@ -136,17 +136,68 @@ In this mode, the repository acts as a data and prompt builder. The outer agent 
 
 ### Quick Start
 
+Install the repository first:
+
 ```bash
 git clone https://github.com/jungducknam/investment-agent-skill.git
 cd investment-agent-skill
 pip install -r requirements.txt
 ```
 
-Build a report request:
+You can now use it in two ways.
+
+#### Option 1: Use the CLI directly
+
+Build a report request from the repository:
 
 ```bash
 scripts/build_agent_request.py report
 ```
+
+This prints a JSON payload for an outer agent. The payload is not the final user-facing answer; the outer agent should turn it into a readable Markdown report.
+
+#### Option 2: Attach it as a local Codex skill
+
+Copy the repository into Codex's local skills directory:
+
+```bash
+mkdir -p ~/.codex/skills/investment-agent
+rsync -a --delete \
+  --exclude '.git' \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  --exclude 'data' \
+  --exclude 'agent-report-request-*.json' \
+  --exclude 'agent-report-request-*.summary.md' \
+  ./ ~/.codex/skills/investment-agent/
+```
+
+Then restart Codex so it reloads the skill list.
+
+To update the installed Codex skill after pulling new changes:
+
+```bash
+cd investment-agent-skill
+git pull origin master
+rsync -a --delete \
+  --exclude '.git' \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  --exclude 'data' \
+  --exclude 'agent-report-request-*.json' \
+  --exclude 'agent-report-request-*.summary.md' \
+  ./ ~/.codex/skills/investment-agent/
+```
+
+To remove it from Codex:
+
+```bash
+rm -rf ~/.codex/skills/investment-agent
+```
+
+Restart Codex after installing, updating, or removing the skill.
+
+### Command Reference
 
 Use the skill-style command phrase in Codex or another agent runtime:
 
@@ -156,7 +207,26 @@ Use the skill-style command phrase in Codex or another agent runtime:
 /investment-skill 포지션 점검 NVIDIA 100달러 2주 보유
 ```
 
-The repository treats `/investment-skill` as an explicit trigger phrase in `SKILL.md`. If a runtime only supports skill names, use `$investment-skill` with the same request text.
+The repository treats `/investment-skill` as the primary explicit trigger phrase in `SKILL.md`. It also supports `$investment-skill`, `/investment-agent`, and `$investment-agent` as aliases.
+
+| Command | Purpose |
+| --- | --- |
+| `/investment-skill 오늘 리포트` | Collects market data and builds a report request. Final answer should be readable Korean Markdown. |
+| `/investment-skill 금일 리포트 작성` | Same as today's report. |
+| `/investment-skill daily report` | Same as today's report. |
+| `/investment-skill 오늘 반도체 섹터 어때?` | Handles a stock, sector, macro, or market question. |
+| `/investment-skill NVDA 지금 진입해도 돼?` | Handles a single-stock entry or risk question. |
+| `/investment-skill 포지션 점검 NVDA 진입가 100 현재가 112 수량 2 롱` | Builds a position review request. |
+
+Equivalent aliases:
+
+```text
+$investment-skill 오늘 리포트
+/investment-agent 오늘 리포트
+$investment-agent 오늘 리포트
+```
+
+### Manual CLI Commands
 
 Build a report request without live data collection:
 
@@ -426,17 +496,68 @@ sudo systemctl status investment-bot
 
 ### 빠른 시작
 
+먼저 저장소를 설치합니다.
+
 ```bash
 git clone https://github.com/jungducknam/investment-agent-skill.git
 cd investment-agent-skill
 pip install -r requirements.txt
 ```
 
-리포트 요청 생성:
+설치 후에는 두 가지 방식으로 사용할 수 있습니다.
+
+#### 선택지 1: CLI를 직접 사용
+
+저장소에서 바로 리포트 요청을 생성합니다.
 
 ```bash
 scripts/build_agent_request.py report
 ```
+
+이 명령은 외부 에이전트가 읽을 JSON payload를 출력합니다. 이 JSON은 최종 사용자 답변이 아닙니다. 외부 에이전트가 이 payload를 읽고 사람이 읽을 수 있는 Markdown 리포트로 바꿔야 합니다.
+
+#### 선택지 2: Codex 로컬 스킬로 붙이기
+
+저장소 내용을 Codex 로컬 스킬 디렉터리에 복사합니다.
+
+```bash
+mkdir -p ~/.codex/skills/investment-agent
+rsync -a --delete \
+  --exclude '.git' \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  --exclude 'data' \
+  --exclude 'agent-report-request-*.json' \
+  --exclude 'agent-report-request-*.summary.md' \
+  ./ ~/.codex/skills/investment-agent/
+```
+
+그 다음 Codex를 재시작해야 스킬 목록이 다시 로드됩니다.
+
+저장소를 최신화한 뒤 설치된 Codex 스킬도 업데이트하려면:
+
+```bash
+cd investment-agent-skill
+git pull origin master
+rsync -a --delete \
+  --exclude '.git' \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  --exclude 'data' \
+  --exclude 'agent-report-request-*.json' \
+  --exclude 'agent-report-request-*.summary.md' \
+  ./ ~/.codex/skills/investment-agent/
+```
+
+Codex에서 제거하려면:
+
+```bash
+rm -rf ~/.codex/skills/investment-agent
+```
+
+설치, 업데이트, 삭제 후에는 Codex를 재시작하세요.
+
+### 명령어 목록
 
 Codex나 다른 에이전트 런타임에서는 스킬식 명령 문구로 호출할 수 있습니다.
 
@@ -446,7 +567,26 @@ Codex나 다른 에이전트 런타임에서는 스킬식 명령 문구로 호�
 /investment-skill 포지션 점검 NVIDIA 100달러 2주 보유
 ```
 
-이 저장소의 `SKILL.md`는 `/investment-skill`을 명시적 트리거 문구로 취급합니다. 사용하는 런타임이 스킬 이름 호출만 지원한다면 같은 요청을 `$investment-skill` 뒤에 붙여 쓰면 됩니다.
+이 저장소의 `SKILL.md`는 `/investment-skill`을 primary 명시적 트리거 문구로 취급합니다. `$investment-skill`, `/investment-agent`, `$investment-agent`도 alias로 지원합니다.
+
+| 명령어 | 용도 |
+| --- | --- |
+| `/investment-skill 오늘 리포트` | 시장 데이터를 수집하고 오늘 리포트 요청을 만듭니다. 최종 답변은 사람이 읽는 한국어 Markdown이어야 합니다. |
+| `/investment-skill 금일 리포트 작성` | 오늘 리포트와 같은 의미입니다. |
+| `/investment-skill daily report` | 오늘 리포트와 같은 의미입니다. |
+| `/investment-skill 오늘 반도체 섹터 어때?` | 종목, 섹터, 매크로, 시장 질문으로 처리합니다. |
+| `/investment-skill NVDA 지금 진입해도 돼?` | 단일 종목 진입/리스크 질문으로 처리합니다. |
+| `/investment-skill 포지션 점검 NVDA 진입가 100 현재가 112 수량 2 롱` | 포지션 리뷰 요청을 만듭니다. |
+
+동일한 alias 예시:
+
+```text
+$investment-skill 오늘 리포트
+/investment-agent 오늘 리포트
+$investment-agent 오늘 리포트
+```
+
+### 수동 CLI 명령어
 
 실시간 데이터 수집 없이 프롬프트 껍데기만 생성:
 
