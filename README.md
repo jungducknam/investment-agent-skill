@@ -7,14 +7,14 @@
 <a name="english"></a>
 ## English
 
-Investment Agent Skill is a lightweight investment-analysis package for Korean and US markets. It combines real-time market data collection, momentum inflection detection, market regime classification, entry timing filters, and AI-ready prompts.
+Investment Agent Skill is an investment-analysis package for Korean and US markets. It combines real-time market data collection, momentum inflection detection, market regime classification, entry timing filters, news intelligence, data-quality checks, deterministic risk gates, and AI-ready prompts.
 
 It supports two usage modes:
 
 1. **Standalone Telegram System**: a 24/7 bot that uses Telegram credentials and an OpenAI-compatible API key.
 2. **On-Demand Agent Command Mode**: a skill/tool package that Codex, Manus, OpenAI Agents SDK, or another agent runtime uses only when the user explicitly asks for an analysis.
 
-This repository intentionally excludes scheduled market-memory storage and periodic momentum archiving. It is designed to stay lightweight and command-driven, while still supporting Telegram for users who want an independent bot.
+On-demand agent mode does not start Telegram, a scheduler, or a background service. When local market-memory or snapshot stores are present, the report harness can use them as context; standalone Telegram mode remains available for users who want an independent bot.
 
 ### Core Features
 
@@ -23,7 +23,8 @@ This repository intentionally excludes scheduled market-memory storage and perio
 | Momentum inflection engine | Classifies momentum into 6 phases using ROC and acceleration/deceleration. |
 | Market regime classifier | Classifies Korean and US markets into bull, correction, sideways, or bear regimes. |
 | Entry timing filter | Uses RSI, Bollinger Bands, volume, and ADX to avoid chasing overheated stocks. |
-| Report prompt builder | Builds structured report prompts with market data, news, calendar, Yahoo insights, and entry signals. |
+| Report harness | Builds `REPORT_INPUT_JSON` prompts with market data, news, calendar, Yahoo insights, entry signals, data quality, and deterministic execution context. |
+| Deterministic risk gate | Calculates entry/stop/targets/position size and blocks unsupported execution candidates. |
 | Position review | Reviews registered or supplied positions with rule-based and AI-ready judgment context. |
 | Telegram adapter | Runs as an independent Telegram bot with API-key backed AI calls. |
 | Agent adapter | Returns `system_prompt`, `user_prompt`, and data payloads for an outer agent to answer. |
@@ -271,12 +272,14 @@ The outer agent should:
 4. Generate the final report, chat answer, or position review with its own model.
 5. Show the user a readable Markdown answer. Do not show the raw JSON payload unless the user explicitly asks for it.
 
+For report requests, `user_prompt` contains a `REPORT_INPUT_JSON` object. The deterministic execution layer is authoritative for `action_status`, `risk_gate_status`, `is_executable`, entry, targets, stops, risk/reward, and position size. The outer agent must not invent missing execution numbers.
+
 For `investment_report`, the generated prompt explicitly asks for a Korean Markdown report with:
 
 - one-line conclusion
 - market overview
 - sector/theme summary
-- entry candidates
+- action plan based on deterministic execution statuses
 - wait/do-not-chase candidates
 - portfolio strategy
 - key risks
@@ -329,9 +332,12 @@ investment-agent-skill/
 │   ├── bot.py                     # Telegram adapter
 │   ├── agent_adapter.py           # Agent command adapter
 │   ├── ai_client.py               # API client for Telegram mode and shared prompt builders
-│   ├── report_engine.py           # Data collection and report prompt builder
+│   ├── report_engine.py           # Data collection and REPORT_INPUT_JSON harness
+│   ├── price_engine.py            # Entry/stop/target/position sizing
+│   ├── risk_gate.py               # Execution gate
+│   ├── recommendation_safety.py   # LLM candidate post-processing and safety controls
 │   ├── entry_filter.py            # RSI/BB/volume/ADX entry timing
-│   ├── market_regime.py           # Market regime classification
+│   ├── market_regime_engine.py    # Market regime and risk budget
 │   ├── momentum_inflection.py     # Momentum phase detection
 │   ├── position_tracker.py        # Position parsing and rule-based review
 │   └── data_*.py                  # Market, news, calendar, Yahoo data
@@ -367,14 +373,14 @@ MIT License. See [LICENSE](LICENSE) for details.
 <a name="korean"></a>
 ## 한국어
 
-Investment Agent Skill은 한국과 미국 시장을 분석하기 위한 경량 투자 분석 패키지입니다. 실시간 시장 데이터 수집, 모멘텀 변곡 판단, 시장 레짐 분류, 진입 타이밍 필터, AI용 프롬프트 생성을 결합합니다.
+Investment Agent Skill은 한국과 미국 시장을 분석하기 위한 투자 분석 패키지입니다. 실시간 시장 데이터 수집, 모멘텀 변곡 판단, 시장 레짐 분류, 진입 타이밍 필터, 뉴스 인텔리전스, 데이터 품질 점검, deterministic 리스크 게이트, AI용 프롬프트 생성을 결합합니다.
 
 이 저장소는 두 가지 사용 방식을 지원합니다.
 
 1. **텔레그램 + API 키 독립 시스템**: 서버에서 24시간 실행되는 텔레그램 봇 방식입니다.
 2. **에이전트 AI 스킬 명령형 방식**: Codex, Manus, OpenAI Agents SDK 같은 외부 에이전트가 사용자의 명령 시점에만 분석 요청을 만들고 답변하는 방식입니다.
 
-이 저장소는 정기 시장 기억 저장, 주기적 모멘텀 아카이빙, 장기 스케줄러를 의도적으로 제외합니다. 텔레그램 방식은 독립 실행을 지원하고, 에이전트 방식은 사용자가 명령할 때만 가볍게 동작하도록 설계했습니다.
+에이전트 명령형 방식은 텔레그램, 스케줄러, 장기 실행 서비스를 시작하지 않습니다. 로컬 시장 기억이나 스냅샷 저장소가 있으면 리포트 하네스가 이를 컨텍스트로 활용하고, 독립 실행이 필요할 때는 텔레그램 방식을 사용합니다.
 
 ### 핵심 기능
 
@@ -383,7 +389,8 @@ Investment Agent Skill은 한국과 미국 시장을 분석하기 위한 경량 
 | 모멘텀 변곡 판단 | ROC와 가속/감속을 기반으로 모멘텀을 6단계로 분류합니다. |
 | 시장 레짐 분류 | 한국과 미국 시장을 강세, 조정, 횡보, 약세로 분류합니다. |
 | 진입 타이밍 필터 | RSI, 볼린저밴드, 거래량, ADX로 과열 종목 추격매수를 줄입니다. |
-| 리포트 프롬프트 생성 | 시장 데이터, 뉴스, 일정, Yahoo 인사이트, 진입 시그널을 묶어 구조화된 프롬프트를 만듭니다. |
+| 리포트 하네스 | 시장 데이터, 뉴스, 일정, Yahoo 인사이트, 진입 시그널, 데이터 품질, deterministic 실행 컨텍스트를 묶은 `REPORT_INPUT_JSON` 프롬프트를 만듭니다. |
+| deterministic 리스크 게이트 | 진입가/손절/목표가/비중을 계산하고 실행 근거가 약한 후보를 차단합니다. |
 | 포지션 리뷰 | 저장된 포지션 또는 전달받은 포지션을 규칙 기반 및 AI용 컨텍스트로 점검합니다. |
 | 텔레그램 어댑터 | API 키를 사용해 독립형 텔레그램 봇으로 실행합니다. |
 | 에이전트 어댑터 | 외부 에이전트가 사용할 `system_prompt`, `user_prompt`, 데이터 payload를 반환합니다. |
@@ -631,12 +638,14 @@ scripts/build_agent_request.py position \
 4. 자기 모델로 최종 리포트, 자유 답변, 포지션 리뷰를 생성합니다.
 5. 사용자에게는 원시 JSON이 아니라 사람이 읽을 수 있는 Markdown 답변을 보여줍니다.
 
+리포트 요청의 `user_prompt`에는 `REPORT_INPUT_JSON` 객체가 들어 있습니다. `action_status`, `risk_gate_status`, `is_executable`, 진입가, 목표가, 손절가, 손익비, 비중은 deterministic 실행 레이어 결과를 권위 값으로 사용해야 하며, 외부 에이전트가 없는 숫자를 새로 만들면 안 됩니다.
+
 `investment_report` 요청의 프롬프트는 최종 출력을 한국어 Markdown 리포트로 만들도록 지시합니다. 포함해야 하는 섹션은 다음과 같습니다.
 
 - 한 줄 결론
 - 시장 현황
 - 섹터/테마 요약
-- 진입 가능 후보
+- deterministic 실행 상태 기반 액션 플랜
 - 대기/추격 금지 후보
 - 포트폴리오 전략
 - 주요 리스크
@@ -689,9 +698,12 @@ investment-agent-skill/
 │   ├── bot.py                     # 텔레그램 어댑터
 │   ├── agent_adapter.py           # 에이전트 명령형 어댑터
 │   ├── ai_client.py               # 텔레그램 방식 API 클라이언트 및 공용 프롬프트 빌더
-│   ├── report_engine.py           # 데이터 수집 및 리포트 프롬프트 생성
+│   ├── report_engine.py           # 데이터 수집 및 REPORT_INPUT_JSON 리포트 하네스
+│   ├── price_engine.py            # 진입가/손절/목표가/비중 산출
+│   ├── risk_gate.py               # 실행 가능 여부 게이트
+│   ├── recommendation_safety.py   # LLM 후보 후처리 및 안전장치
 │   ├── entry_filter.py            # RSI/BB/거래량/ADX 진입 타이밍
-│   ├── market_regime.py           # 시장 레짐 분류
+│   ├── market_regime_engine.py    # 시장 레짐 및 리스크 예산
 │   ├── momentum_inflection.py     # 모멘텀 단계 판단
 │   ├── position_tracker.py        # 포지션 파싱 및 규칙 기반 리뷰
 │   └── data_*.py                  # 시장, 뉴스, 일정, Yahoo 데이터

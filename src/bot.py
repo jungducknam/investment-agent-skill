@@ -11,10 +11,11 @@ bot.py — 텔레그램 봇 메인 서버 (OCI 최적화)
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters
@@ -37,8 +38,10 @@ from src.data_market import get_price_safe
 from src.report_formatter import build_msg1, build_msg2
 from src.report_engine import generate_investment_report
 from src.ai_client import ai_position_judge, ask_ai_question
+from src.performance_tracker import record_recommendation_snapshots
 from src.monitor import monitoring_loop
-
+from src.snapshot_collector import snapshot_collection_loop
+from src.memory_scheduler import memory_scheduler_loop
 
 # ── 로깅 설정 ────────────────────────────────────────
 # httpx/httpcore 로그 억제 (토큰 유출 방지 및 가독성)
@@ -92,6 +95,42 @@ def log_activity(event: str, **fields):
         append_activity(event, **fields)
     except Exception as exc:
         logger.warning(f"activity log write failed: {exc}")
+
+
+DAILY_BRIEFING_HOUR = 7
+DAILY_BRIEFING_MINUTE = 0
+
+
+def _as_kst(now: datetime) -> datetime:
+    if now.tzinfo is None:
+        return KST.localize(now)
+    return now.astimezone(KST)
+
+
+def is_daily_briefing_day(now: datetime) -> bool:
+    """일요일을 제외한 날만 아침 브리핑을 발송한다."""
+    return _as_kst(now).weekday() != 6
+
+
+def next_daily_briefing_time(now: datetime | None = None) -> datetime:
+    """다음 07:00 KST 브리핑 시각. 일요일은 건너뛴다."""
+    now = _as_kst(now or datetime.now(KST))
+    candidate = now.replace(
+        hour=DAILY_BRIEFING_HOUR,
+        minute=DAILY_BRIEFING_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    while not is_daily_briefing_day(candidate):
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def seconds_until_next_daily_briefing(now: datetime | None = None) -> float:
+    now = _as_kst(now or datetime.now(KST))
+    return max((next_daily_briefing_time(now) - now).total_seconds(), 0)
 
 
 # ── 상태 관리 ────────────────────────────────────────
@@ -260,6 +299,7 @@ async def send_report(message, source: str = "unknown"):
             msg1 = build_msg1(report)
             msg2 = build_msg2(report)
             save_report(today, report, msg1, msg2)
+            record_recommendation_snapshots(today, report)
             logger.info(f"리포트 생성 및 저장 완료 ({today})")
         except Exception as e:
             logger.error(f"리포트 생성 실패: {e}")
@@ -434,8 +474,82 @@ async def send_telegram_message(text: str):
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
     for chunk in chunks:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=chunk, parse_mode="Markdown")
+        try:
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=chunk, parse_mode="Markdown")
+        except BadRequest as exc:
+            logger.warning("Markdown 텔레그램 전송 실패, 일반 텍스트로 재전송: %s", exc)
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=chunk)
         await asyncio.sleep(0.3)
+
+
+async def generate_and_send_daily_briefing(source: str = "scheduled_0700"):
+    """사용자 요청 없이 오늘 리포트를 생성/캐시하고 텔레그램으로 발송한다."""
+    today = datetime.now(KST).strftime("%Y%m%d")
+    log_activity(
+        "report_requested",
+        source=source,
+        report_date=today,
+        chat_id=TELEGRAM_CHAT_ID,
+    )
+
+    cached = load_report(today)
+    cache_hit = bool(cached)
+
+    try:
+        if cached:
+            logger.info(f"자동 브리핑 캐시 히트 ({today})")
+            report = cached["report"]
+            msg1 = cached["msg1"] or build_msg1(report)
+            msg2 = cached["msg2"] or build_msg2(report)
+        else:
+            logger.info(f"자동 브리핑 생성 시작 ({today})")
+            report = generate_investment_report()
+            msg1 = build_msg1(report)
+            msg2 = build_msg2(report)
+            save_report(today, report, msg1, msg2)
+            record_recommendation_snapshots(today, report)
+            logger.info(f"자동 브리핑 생성 및 저장 완료 ({today})")
+
+        await send_telegram_message(msg1)
+        await asyncio.sleep(0.5)
+        await send_telegram_message(msg2)
+        log_activity(
+            "report_sent",
+            source=source,
+            report_date=today,
+            cache_hit=cache_hit,
+            msg1_length=len(msg1),
+            msg2_length=len(msg2),
+            chat_id=TELEGRAM_CHAT_ID,
+        )
+    except Exception as exc:
+        logger.exception(f"자동 브리핑 실패: {exc}")
+        log_activity(
+            "report_failed",
+            source=source,
+            report_date=today,
+            error=str(exc),
+            chat_id=TELEGRAM_CHAT_ID,
+        )
+        raise
+
+
+async def daily_briefing_loop():
+    """매일 07:00 KST 자동 브리핑. 일요일은 다음 월요일로 넘긴다."""
+    while True:
+        now = datetime.now(KST)
+        next_run = next_daily_briefing_time(now)
+        delay = max((next_run - now).total_seconds(), 0)
+        logger.info(f"다음 자동 브리핑 예정: {next_run.strftime('%Y-%m-%d %H:%M:%S KST')}")
+        await asyncio.sleep(delay)
+
+        run_at = datetime.now(KST)
+        if not is_daily_briefing_day(run_at):
+            logger.info("일요일 자동 브리핑 스킵")
+        else:
+            await generate_and_send_daily_briefing()
+
+        await asyncio.sleep(60)
 
 
 # ── 메인 ─────────────────────────────────────────────
@@ -461,7 +575,17 @@ def main():
         asyncio.create_task(monitoring_loop(send_telegram_message))
         logger.info("모니터링 루프 시작됨")
 
+        # 스냅샷 수집 루프 (1~2시간 간격 시장 데이터 축적)
+        asyncio.create_task(snapshot_collection_loop())
+        logger.info("스냅샷 수집 루프 시작됨 (장중 1시간 / 장외 2시간 / 주말 6시간)")
 
+        # 매일 07:00 자동 브리핑 (일요일 제외)
+        asyncio.create_task(daily_briefing_loop())
+        logger.info("자동 브리핑 스케줄러 시작됨 (월~토 07:00 KST)")
+
+        # 계층적 시장 기억 스케줄러 (매일07시/토07시/말일 자동 요약+정리)
+        asyncio.create_task(memory_scheduler_loop())
+        logger.info("시장 기억 스케줄러 시작됨 (매일→매주→매달 계층 압축)")
 
     app.post_init = post_init
 

@@ -8,7 +8,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import yfinance as yf
 
+from .data_market import get_last_regular_close, get_regular_history, is_valid_number
+
 logger = logging.getLogger(__name__)
+
+
+def _num(value, default=0):
+    return float(value) if is_valid_number(value) else default
+
+
+def _first_number(*values, default=0):
+    for value in values:
+        if is_valid_number(value):
+            return float(value)
+    return default
 
 
 def get_stock_insights(ticker_yf: str, market: str = "US") -> dict:
@@ -19,19 +32,23 @@ def get_stock_insights(ticker_yf: str, market: str = "US") -> dict:
 
         # 기본 정보
         name = info.get("shortName", ticker_yf)
-        current_price = info.get("currentPrice") or info.get("regularMarketPrice", 0)
+        current_price = _first_number(
+            info.get("currentPrice"),
+            info.get("regularMarketPrice"),
+            get_last_regular_close(ticker_yf, period="5d"),
+        )
         currency = "KRW" if market == "KR" else "USD"
 
         # 52주 범위
-        high_52w = info.get("fiftyTwoWeekHigh", 0)
-        low_52w = info.get("fiftyTwoWeekLow", 0)
+        high_52w = _num(info.get("fiftyTwoWeekHigh"))
+        low_52w = _num(info.get("fiftyTwoWeekLow"))
         pos_52w = 0
         if high_52w and low_52w and high_52w != low_52w:
             pos_52w = round((current_price - low_52w) / (high_52w - low_52w) * 100, 1)
 
         # 이동평균 트렌드
-        ma50 = info.get("fiftyDayAverage", 0)
-        ma200 = info.get("twoHundredDayAverage", 0)
+        ma50 = _num(info.get("fiftyDayAverage"))
+        ma200 = _num(info.get("twoHundredDayAverage"))
         if ma50 and ma200:
             if current_price > ma50 > ma200:
                 trend = "강세 (가격>MA50>MA200)"
@@ -43,29 +60,29 @@ def get_stock_insights(ticker_yf: str, market: str = "US") -> dict:
             trend = "데이터 부족"
 
         # 애널리스트 목표가
-        target_mean = info.get("targetMeanPrice", 0)
-        target_high = info.get("targetHighPrice", 0)
-        target_low = info.get("targetLowPrice", 0)
+        target_mean = _num(info.get("targetMeanPrice"))
+        target_high = _num(info.get("targetHighPrice"))
+        target_low = _num(info.get("targetLowPrice"))
         recommendation = info.get("recommendationKey", "N/A")
-        num_analysts = info.get("numberOfAnalystOpinions", 0)
+        num_analysts = _num(info.get("numberOfAnalystOpinions"))
         upside = round((target_mean / current_price - 1) * 100, 1) if target_mean and current_price else 0
 
         # 펀더멘털
-        per = info.get("trailingPE") or info.get("forwardPE", 0)
-        pbr = info.get("priceToBook", 0)
-        roe = info.get("returnOnEquity", 0)
-        eps = info.get("trailingEps", 0)
-        revenue_growth = info.get("revenueGrowth", 0)
-        earnings_growth = info.get("earningsGrowth", 0)
-        debt_to_equity = info.get("debtToEquity", 0)
-        free_cashflow = info.get("freeCashflow", 0)
+        per = _first_number(info.get("trailingPE"), info.get("forwardPE"))
+        pbr = _num(info.get("priceToBook"))
+        roe = _num(info.get("returnOnEquity"))
+        eps = _num(info.get("trailingEps"))
+        revenue_growth = _num(info.get("revenueGrowth"))
+        earnings_growth = _num(info.get("earningsGrowth"))
+        debt_to_equity = _num(info.get("debtToEquity"))
+        free_cashflow = _num(info.get("freeCashflow"))
 
         # 배당
-        dividend_yield = info.get("dividendYield", 0)
+        dividend_yield = _num(info.get("dividendYield"))
 
         # 내부자/기관 보유
-        insider_pct = info.get("heldPercentInsiders", 0)
-        institution_pct = info.get("heldPercentInstitutions", 0)
+        insider_pct = _num(info.get("heldPercentInsiders"))
+        institution_pct = _num(info.get("heldPercentInstitutions"))
 
         # RSI 계산 (14일)
         rsi = _calc_rsi(ticker_yf)
@@ -109,7 +126,7 @@ def get_stock_insights(ticker_yf: str, market: str = "US") -> dict:
 def _calc_rsi(ticker_yf: str, period: int = 14) -> float:
     """RSI 14일 계산"""
     try:
-        hist = yf.Ticker(ticker_yf).history(period="1mo")
+        hist = get_regular_history(ticker_yf, period="1mo")
         if hist.empty or len(hist) < period + 1:
             return 50.0
         closes = hist["Close"].values
@@ -162,7 +179,7 @@ def format_insights_for_prompt(insights: dict) -> str:
 def get_support_resistance(ticker_yf: str) -> dict | None:
     """지지/저항선 + 피보나치 계산"""
     try:
-        hist = yf.Ticker(ticker_yf).history(period="3mo")
+        hist = get_regular_history(ticker_yf, period="3mo", required_columns=("High", "Low", "Close"))
         if hist.empty or len(hist) < 20:
             return None
         highs = hist["High"].values

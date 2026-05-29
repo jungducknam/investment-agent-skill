@@ -1,4 +1,5 @@
 import unittest
+import json
 
 
 SAMPLE_CONTEXT = {
@@ -21,14 +22,19 @@ SAMPLE_CONTEXT = {
     "stock_news": {"005930": "반도체 수요 회복"},
     "theme_news": {"반도체": ["메모리 가격 반등"]},
     "headlines": ["AI 인프라 투자 확대"],
+    "detailed_news": [],
     "calendar": {"economic_events": ["FOMC"], "earnings": []},
     "yahoo_text": "삼성전자 목표가 상향",
+    "flow_summary": "반도체 섹터 상대강도 개선",
+    "memory_context": "최근 일간 요약 없음",
+    "historical_news_context": "이전 중요 뉴스 없음",
     "entry_signals": {
         "005930": {
             "name": "삼성전자",
             "signal": "적정",
             "emoji": "🟢",
             "score": 82,
+            "current_price": 70000,
             "rsi": 55,
             "bb_position": 48,
             "reasons": ["RSI 안정", "거래량 양호"],
@@ -54,6 +60,18 @@ class AgentAdapterTests(unittest.TestCase):
         self.assertNotIn("strict JSON", request["expected_output"])
         self.assertIn("삼성전자", request["user_prompt"])
         self.assertEqual(request["data"]["collected_at"], SAMPLE_CONTEXT["collected_at"])
+
+    def test_report_request_can_build_prompt_shell_without_live_collection(self):
+        from src.agent_adapter import build_report_request
+
+        request = build_report_request(collect=False)
+
+        self.assertEqual(request["mode"], "agent")
+        self.assertEqual(request["task"], "investment_report")
+        payload = self._extract_report_payload(request["user_prompt"])
+        self.assertEqual(payload["market_data"]["indices"], {})
+        self.assertEqual(payload["news"]["selected_report_news"], [])
+        self.assertEqual(payload["metadata"]["prompt_version"], "v4_structured_json_input")
 
     def test_chat_request_exposes_prompts_for_external_agent(self):
         from src.agent_adapter import build_chat_request
@@ -85,6 +103,13 @@ class AgentAdapterTests(unittest.TestCase):
         self.assertEqual(request["data"]["pnl"]["pnl_pct"], 12.0)
         self.assertEqual(request["data"]["rule_baseline"]["source"], "rule")
         self.assertIn("JSON만 답변", request["user_prompt"])
+
+    def _extract_report_payload(self, prompt: str) -> dict:
+        marker = "REPORT_INPUT_JSON:"
+        self.assertIn(marker, prompt)
+        raw = prompt.split(marker, 1)[1].lstrip()
+        payload, _ = json.JSONDecoder().raw_decode(raw)
+        return payload
 
 
 if __name__ == "__main__":

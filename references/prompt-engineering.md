@@ -22,21 +22,22 @@ Korean and US markets are judged independently. US sector momentum is not direct
 
 ## User Prompt Structure
 
-The user prompt is constructed from collected data in the following order. In Telegram mode the local API client sends it to the configured model. In Agent command mode the prompt is returned to the outer agent, which should answer with its own model.
+The user prompt is a structured `REPORT_INPUT_JSON` object. In Telegram mode the local API client sends it to the configured model and expects strict JSON. In Agent command mode the prompt is returned to the outer agent, which should answer with its own model but must not override deterministic execution fields.
 
-1. **Market Indices**: Current prices with change percentages for all tracked indices (KOSPI, KOSDAQ, S&P500, NASDAQ, VIX, USD/KRW, US10Y, Brent, Gold)
-2. **Entry Timing Signals**: Per-stock RSI, Bollinger Band position, and composite signal
-3. **Sector Momentum**: Sector ETF performance rankings (5-day and 20-day)
-4. **Headlines**: Top 8-10 market-moving news items
-5. **Theme News**: News grouped by investment theme (semiconductor, AI, defense, energy, etc.)
-6. **Economic Events**: Upcoming events and earnings dates
-7. **Stock Universe**: Tracked stocks with current prices and technical data
-8. **Yahoo Finance Insights**: Analyst targets and financial metrics
-9. **Output Instructions**: JSON format specification for structured response
+1. **metadata**: report date, timezone, prompt version, report type, execution policy, and strict JSON response format
+2. **instructions**: facts/inferences/actions separation, use-only-provided-data, and `do_not_generate_execution_numbers`
+3. **deterministic_layer**: market session status, report policy, market regime, verified/tentative events, event sections, and data quality
+4. **market_data**: current index snapshots, sector momentum, and tracked stock universe
+5. **technical_entry**: per-stock RSI, Bollinger Band position, ATR/support/resistance, and composite entry signal
+6. **news**: selected report news, impact table, source links, affected assets, and theme news
+7. **market_context**: flow summary, market memory, historical news, Yahoo insights, and extra user context
+8. **output_schema**: the report JSON shape; execution price fields are nullable because the rule engine finalizes them later
 
 ## Output Format
 
-The AI returns structured JSON containing a market summary with overall sentiment and regime assessment, ranked stock recommendations with entry/target/stop prices and confidence levels, a waiting list of overheated stocks to monitor for pullback opportunities, and portfolio strategy guidance based on the current regime.
+The AI returns structured JSON containing market summary, candidate rationale, waiting list, rejected candidates, portfolio strategy, and watchlist. It must leave execution numbers null when they are not directly provided. After the model response, `recommendation_safety.py` calculates or validates executable prices, risk/reward, position size, evidence IDs, `risk_gate_status`, `action_status`, and `is_executable`.
+
+Outer agents should produce Markdown from the returned payload/report, but prices, stops, targets, position sizes, and execution permissions must come from `price_engine_output`, `risk_gate_results`, or the deterministic report fields. If a field is absent, say it is unavailable instead of inventing it.
 
 ## Runtime Selection
 

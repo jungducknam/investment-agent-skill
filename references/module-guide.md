@@ -10,17 +10,21 @@ The entry point for the Telegram bot, built on `python-telegram-bot` (v20+) with
 
 Builds request payloads for Codex, OpenAI Agents SDK, Manus, or another outer agent. It does not start Telegram, does not require Telegram credentials, and does not call an AI API directly. Instead it returns `system_prompt`, `user_prompt`, and supporting data so the outer agent can answer with its own model when the user issues a command.
 
-### report_engine.py — Report Generation
+### report_engine.py — Report Generation Harness
 
-The report engine collects market data from all sources in parallel using `ThreadPoolExecutor`, then constructs an enriched prompt containing index prices, sector momentum, news themes, economic calendar, Yahoo Finance insights, and entry timing signals. Telegram mode calls the configured AI model and parses the JSON response. Agent mode reuses the same prompt builder and lets the outer agent produce the answer.
+The report engine collects market data from all sources in parallel using `ThreadPoolExecutor`, enriches it with market session status, verified/tentative events, market regime, data-quality scores, news impact scores, market memory, and historical news context, then builds one structured `REPORT_INPUT_JSON` prompt. Telegram mode calls the configured AI model and parses strict JSON. Agent mode reuses the same prompt builder and lets the outer agent produce a readable answer while respecting deterministic execution fields.
+
+### price_engine.py / risk_gate.py / recommendation_safety.py — Deterministic Execution Layer
+
+LLM output is treated as candidate commentary. `price_engine.py` calculates entry, stop, target, risk/reward, and position size from current price, ATR, support/resistance, and regime budget. `risk_gate.py` blocks price-missing, overbought, poor risk/reward, stale-data, event-risk, and unsupported catalyst cases. `recommendation_safety.py` applies those calculations to the final report and demotes unsafe candidates to waiting or rejected lists.
 
 ### momentum_inflection.py — 6-Phase Momentum Detection
 
 This module calculates the Rate of Change (ROC) over 10 periods, applies 3-period EMA smoothing, then computes the slope (acceleration/deceleration) of the smoothed momentum. It detects sign flips in the slope to identify inflection points and classifies each stock/sector into one of 6 phases with confidence scores. The same logic applies at both individual stock and sector levels for rotation detection.
 
-### market_regime.py — Market Regime Classification
+### market_regime_engine.py — Market Regime Classification
 
-Computes a composite score from multiple indicators including price vs 20-day moving average, VIX level and direction, sector breadth (advancing vs declining), and USD/KRW trend. The score maps to 4 regimes: Bull (>15), Correction (0~15), Sideways (-15~0), and Bear (<-15). Korean and US markets are scored independently.
+Computes a composite score from index moves, VIX, USD/KRW, rates, oil, and sector momentum. The result includes Korean/US regimes, a global regime, risk score, and risk budget caps used by the deterministic execution layer.
 
 ### entry_filter.py — Entry Timing Filter
 
@@ -30,7 +34,11 @@ Calculates RSI (14-day), Bollinger Band position (20-day, 2 sigma), volume spike
 
 ### data_market.py — Market Data Collection
 
-Fetches major indices via yfinance (KOSPI, KOSDAQ, S&P500, NASDAQ, VIX, USD/KRW, US10Y, Brent, Gold), individual stock prices with change percentages, and sector ETF performance over 5-day and 20-day windows.
+Fetches major indices via KIS where configured and yfinance fallback, individual stock prices with change percentages, session/staleness annotations, and sector ETF performance over 5-day and 20-day windows.
+
+### data_quality_engine.py — Data Quality Scoring
+
+Scores each market data item for missing price, stale timestamps, source conflicts, generic sources, missing technical signals, and regular-session confirmation requirements. The report prompt exposes this table so weak data is treated as a risk, not a trade signal.
 
 ### data_news.py — News Collection
 
@@ -64,7 +72,7 @@ Handles CRUD operations for investment positions (long/short, ticker, entry pric
 
 ### report_formatter.py — Message Formatting
 
-Converts structured JSON report data into formatted Telegram messages with proper emoji, sections, and inline keyboard buttons.
+Converts structured JSON report data into formatted Telegram messages with mobile-readable action sections, explicit waiting/rejected candidates, news impact summaries, event sections, data-quality notes, and position-management context.
 
 ### config.py — Configuration
 

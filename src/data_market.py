@@ -5,6 +5,8 @@ data_market.py — yfinance 기반 시장 데이터 수집 (최적화)
 - 에러 핸들링 강화
 """
 import logging
+import math
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -12,8 +14,11 @@ from functools import lru_cache
 import yfinance as yf
 
 from .config import KST
+from .data_kis import get_domestic_index_quote, get_domestic_stock_price, get_domestic_stock_quote
+from .market_session import annotate_price_session, build_market_session_status
 
 logger = logging.getLogger(__name__)
+KIS_STOCK_QUOTE_INTERVAL_SEC = 0.0
 
 # ── 지수 티커 ─────────────────────────────────────────
 INDEX_TICKERS = {
@@ -80,7 +85,7 @@ SECTOR_ETFS = {
     "바이오(KR)":     "244580.KS",
     "자동차(KR)":     "091170.KS",
     "방산(KR)":       "004490.KS",
-    "IT(KR)":         "098560.KS",
+    "커뮤니케이션서비스(KR)": "315270.KS",
     "에너지(KR)":     "117460.KS",
     "철강(KR)":       "139220.KS",
     "건설(KR)":       "139230.KS",
@@ -103,12 +108,63 @@ SECTOR_ETFS = {
 }
 
 
+def is_valid_number(value) -> bool:
+    """None/NaN/inf가 아닌 숫자만 시장 데이터로 인정한다."""
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def clean_regular_history(hist, required_columns: tuple[str, ...] = ("Close",)):
+    """장외/휴장으로 생긴 빈 row를 제거하고 정규장 유효 데이터만 남긴다."""
+    if hist is None or hist.empty:
+        return hist
+
+    cleaned = hist.copy()
+    for col in required_columns:
+        if col not in cleaned.columns:
+            continue
+        cleaned = cleaned[cleaned[col].map(is_valid_number)]
+    return cleaned
+
+
+def get_regular_history(
+    ticker_yf: str,
+    period: str = "5d",
+    interval: str | None = None,
+    required_columns: tuple[str, ...] = ("Close",),
+):
+    """yfinance history를 가져온 뒤 NaN row를 제거한다."""
+    kwargs = {"period": period}
+    if interval:
+        kwargs["interval"] = interval
+    hist = yf.Ticker(ticker_yf).history(**kwargs)
+    return clean_regular_history(hist, required_columns=required_columns)
+
+
+def last_valid_close(hist) -> float | None:
+    cleaned = clean_regular_history(hist, required_columns=("Close",))
+    if cleaned is None or cleaned.empty:
+        return None
+    close = cleaned["Close"].iloc[-1]
+    return float(close) if is_valid_number(close) else None
+
+
+def get_last_regular_close(ticker_yf: str, period: str = "5d") -> float | None:
+    """마지막 정규장 종가. 장외/휴장 중 실시간 가격이 비면 이 값을 사용한다."""
+    try:
+        return last_valid_close(get_regular_history(ticker_yf, period=period))
+    except Exception as e:
+        logger.debug(f"마지막 정규장 종가 조회 실패 ({ticker_yf}): {e}")
+        return None
+
+
 def _get_price_and_change(ticker_yf: str) -> dict:
     """개별 종목/지수 가격 + 등락률 조회"""
     try:
-        t = yf.Ticker(ticker_yf)
-        hist = t.history(period="5d")
-        if hist.empty:
+        hist = get_regular_history(ticker_yf, period="5d")
+        if hist is None or hist.empty:
             return {}
         current = float(hist["Close"].iloc[-1])
         if len(hist) >= 2:
@@ -116,17 +172,35 @@ def _get_price_and_change(ticker_yf: str) -> dict:
             change_pct = (current - prev) / prev * 100
         else:
             change_pct = 0.0
-        return {"price": round(current, 2), "change_pct": round(change_pct, 2)}
+        return {
+            "price": round(current, 2),
+            "change_pct": round(change_pct, 2),
+            "last_trade_time": _last_trade_time_iso(hist),
+            "source": "Yahoo",
+        }
     except Exception as e:
         logger.debug(f"가격 조회 실패 ({ticker_yf}): {e}")
         return {}
 
 
+def _get_stock_price_data(stock: dict) -> dict:
+    """종목 유니버스 가격 조회. 국장은 KIS를 우선 사용한다."""
+    if stock.get("market") == "KR":
+        try:
+            data = get_domestic_stock_quote(stock["ticker"])
+            if data:
+                return data
+        except Exception as e:
+            logger.debug(f"KIS 가격 조회 실패 ({stock['ticker']}): {e}")
+
+    return _get_price_and_change(stock["yf"])
+
+
 def _get_momentum(ticker_yf: str) -> dict:
     """ETF 5일/20일 수익률 계산"""
     try:
-        hist = yf.Ticker(ticker_yf).history(period="1mo")
-        if hist.empty or len(hist) < 5:
+        hist = get_regular_history(ticker_yf, period="1mo")
+        if hist is None or hist.empty or len(hist) < 5:
             return {}
         current = float(hist["Close"].iloc[-1])
         ret_5d = (current / float(hist["Close"].iloc[-5]) - 1) * 100 if len(hist) >= 5 else 0
@@ -145,9 +219,19 @@ def _get_momentum(ticker_yf: str) -> dict:
 def fetch_indices() -> dict:
     """주요 지수 병렬 조회"""
     results = {}
+
+    for name in ("KOSPI", "KOSDAQ"):
+        try:
+            data = get_domestic_index_quote(name)
+            if data:
+                results[name] = data
+        except Exception as e:
+            logger.debug(f"KIS 국내 지수 조회 실패 ({name}): {e}")
+
     with ThreadPoolExecutor(max_workers=5) as ex:
         futures = {ex.submit(_get_price_and_change, yf_t): name
-                   for name, yf_t in INDEX_TICKERS.items()}
+                   for name, yf_t in INDEX_TICKERS.items()
+                   if name not in results}
         for fut in as_completed(futures, timeout=30):
             name = futures[fut]
             try:
@@ -160,14 +244,28 @@ def fetch_indices() -> dict:
 def fetch_stock_prices() -> dict:
     """종목 유니버스 가격 병렬 조회"""
     results = {}
+    now_kst = datetime.now(KST)
+    sessions = build_market_session_status(now_kst)
+    kr_stocks = [s for s in STOCK_UNIVERSE if s.get("market") == "KR"]
+    non_kr_stocks = [s for s in STOCK_UNIVERSE if s.get("market") != "KR"]
 
     def _fetch_one(stock: dict) -> tuple:
-        data = _get_price_and_change(stock["yf"])
+        data = _get_stock_price_data(stock)
         data.update({"name": stock["name"], "market": stock["market"], "sector": stock["sector"]})
+        data = annotate_price_session(data, stock["market"], sessions.get(stock["market"]), now_kst=now_kst)
         return stock["ticker"], data
 
+    for stock in kr_stocks:
+        try:
+            ticker, data = _fetch_one(stock)
+            if data.get("price"):
+                results[ticker] = data
+        except Exception:
+            pass
+        time.sleep(KIS_STOCK_QUOTE_INTERVAL_SEC)
+
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = [ex.submit(_fetch_one, s) for s in STOCK_UNIVERSE]
+        futures = [ex.submit(_fetch_one, s) for s in non_kr_stocks]
         for fut in as_completed(futures, timeout=60):
             try:
                 ticker, data = fut.result()
@@ -176,6 +274,19 @@ def fetch_stock_prices() -> dict:
             except Exception:
                 pass
     return results
+
+
+def _last_trade_time_iso(hist) -> str:
+    if hist is None or hist.empty:
+        return ""
+    idx = hist.index[-1]
+    try:
+        dt = idx.to_pydatetime()
+    except AttributeError:
+        return ""
+    if dt.tzinfo is None:
+        dt = KST.localize(dt)
+    return dt.astimezone(KST).isoformat()
 
 
 def fetch_sector_momentum() -> dict:
@@ -200,28 +311,30 @@ def get_realtime_price(ticker: str, market: str) -> float | None:
     try:
         if market == "KR":
             t_str = ticker.zfill(6)
+            price = get_domestic_stock_price(t_str)
+            if price is not None:
+                return price
+
             for suffix in [".KS", ".KQ"]:
                 try:
-                    hist = yf.Ticker(t_str + suffix).history(period="1d", interval="1m")
-                    if not hist.empty:
-                        return float(hist["Close"].iloc[-1])
+                    price = last_valid_close(get_regular_history(t_str + suffix, period="1d", interval="1m"))
+                    if price is not None:
+                        return price
                 except Exception:
                     continue
             # fallback: 일봉
             for suffix in [".KS", ".KQ"]:
                 try:
-                    hist = yf.Ticker(t_str + suffix).history(period="5d")
-                    if not hist.empty:
-                        return float(hist["Close"].iloc[-1])
+                    price = get_last_regular_close(t_str + suffix, period="5d")
+                    if price is not None:
+                        return price
                 except Exception:
                     continue
         else:
-            hist = yf.Ticker(ticker).history(period="1d", interval="1m")
-            if not hist.empty:
-                return float(hist["Close"].iloc[-1])
-            hist = yf.Ticker(ticker).history(period="5d")
-            if not hist.empty:
-                return float(hist["Close"].iloc[-1])
+            price = last_valid_close(get_regular_history(ticker, period="1d", interval="1m"))
+            if price is not None:
+                return price
+            return get_last_regular_close(ticker, period="5d")
     except Exception as e:
         logger.debug(f"실시간 가격 조회 실패 ({ticker}): {e}")
     return None

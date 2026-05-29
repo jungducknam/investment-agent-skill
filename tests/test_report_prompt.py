@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from tests.test_agent_adapter import SAMPLE_CONTEXT
 
@@ -9,18 +10,30 @@ class ReportPromptTests(unittest.TestCase):
 
         system_prompt, user_prompt = build_report_prompt(SAMPLE_CONTEXT)
 
-        self.assertIn("글로벌 투자 전략가", system_prompt)
-        self.assertIn("실시간 주요 지수", user_prompt)
-        self.assertIn("AI 인프라 투자 확대", user_prompt)
-        self.assertIn('"recommendations"', user_prompt)
+        self.assertIn("투자 브리핑 작성자", system_prompt)
+        self.assertIn("REPORT_INPUT_JSON", user_prompt)
+        payload = self._extract_report_payload(user_prompt)
+        self.assertEqual(payload["metadata"]["prompt_version"], "v4_structured_json_input")
+        self.assertIn("deterministic_layer", payload)
+        self.assertIn("market_data", payload)
+        self.assertIn("output_schema", payload)
+        self.assertIn("recommendations", payload["output_schema"])
 
     def test_build_report_prompt_accepts_extra_context_string(self):
         from src.report_engine import build_report_prompt
 
         _, user_prompt = build_report_prompt("추가 관찰: 반도체 수급 개선")
 
-        self.assertIn("추가 관찰: 반도체 수급 개선", user_prompt)
-        self.assertIn("JSON 투자 리포트", user_prompt)
+        payload = self._extract_report_payload(user_prompt)
+        self.assertEqual(payload["market_context"]["extra_context"], "추가 관찰: 반도체 수급 개선")
+        self.assertTrue(payload["instructions"]["do_not_generate_execution_numbers"])
+
+    def _extract_report_payload(self, prompt: str) -> dict:
+        marker = "REPORT_INPUT_JSON:"
+        self.assertIn(marker, prompt)
+        raw = prompt.split(marker, 1)[1].lstrip()
+        payload, _ = json.JSONDecoder().raw_decode(raw)
+        return payload
 
 
 if __name__ == "__main__":

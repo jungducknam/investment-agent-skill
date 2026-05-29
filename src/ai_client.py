@@ -1,19 +1,22 @@
 """
 ai_client.py — AI 호출 전용 클라이언트
 OCI에서 Manus API를 통해 AI 기능 호출
-- 리포트 생성 (gemini-2.5-flash)
+- 리포트 생성 (Gemini API 우선, Manus proxy 폴백)
 - 포지션 AI 판단 (gpt-4.1-nano)
 - 자유 질문 답변 (gpt-4.1-mini)
 """
 import json
 import logging
 from datetime import datetime
+from urllib import error, request
 
 from openai import OpenAI
 
 from .config import (
     OPENAI_API_KEY, OPENAI_BASE_URL,
-    MODEL_REPORT, MODEL_POSITION, MODEL_CHAT, KST
+    MODEL_REPORT, MODEL_POSITION, MODEL_CHAT, KST,
+    GEMINI_API_KEY, GEMINI_API_BASE, GEMINI_MODEL_REPORT,
+    GEMINI_REPORT_THINKING_LEVEL, GEMINI_REPORT_MAX_OUTPUT_TOKENS,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,80 @@ def get_client() -> OpenAI:
             base_url=OPENAI_BASE_URL,
         )
     return _client
+
+
+def _extract_gemini_text(payload: dict) -> str:
+    candidates = payload.get("candidates") or []
+    candidate = candidates[0] if candidates else {}
+    parts = candidate.get("content", {}).get("parts") or []
+    text = "".join(
+        part.get("text", "")
+        for part in parts
+        if part.get("text") and not part.get("thought")
+    ).strip()
+    if text:
+        return text
+
+    finish_reason = candidate.get("finishReason")
+    model_version = payload.get("modelVersion")
+    usage = payload.get("usageMetadata", {})
+    raise RuntimeError(
+        "Gemini 응답에 텍스트가 없습니다 "
+        f"(finishReason={finish_reason}, modelVersion={model_version}, usage={usage})"
+    )
+
+
+def generate_gemini_report_text(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    max_output_tokens: int | None = None,
+) -> str:
+    """Google Gemini REST API로 리포트 원문 JSON 텍스트를 생성한다."""
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+
+    url = f"{GEMINI_API_BASE.rstrip('/')}/models/{GEMINI_MODEL_REPORT}:generateContent"
+    payload = {
+        "systemInstruction": {
+            "parts": [{"text": system_prompt}],
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_prompt}],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": max_output_tokens or GEMINI_REPORT_MAX_OUTPUT_TOKENS,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {
+                "thinkingLevel": GEMINI_REPORT_THINKING_LEVEL,
+            },
+        },
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "X-goog-api-key": GEMINI_API_KEY,
+        },
+        method="POST",
+    )
+
+    try:
+        with request.urlopen(req, timeout=120) as resp:
+            body = resp.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Gemini 리포트 생성 실패: HTTP {exc.code}: {detail}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Gemini 리포트 생성 실패: {exc.reason}") from exc
+
+    return _extract_gemini_text(json.loads(body))
 
 
 # ── AI 판단 캐시 ─────────────────────────────────────
@@ -165,9 +242,11 @@ def ask_ai_question(question: str, context: str = "", yahoo_ctx: str = "") -> st
 
 def generate_report_via_ai(data_context: str) -> dict:
     """리포트 생성 (gemini-2.5-flash)"""
-    from .report_engine import build_report_prompt
+    from .recommendation_safety import apply_recommendation_safety_controls
+    from .report_engine import _empty_report_context, build_report_prompt
 
-    system_prompt, user_prompt = build_report_prompt(data_context)
+    ctx = _empty_report_context(data_context)
+    system_prompt, user_prompt = build_report_prompt(ctx)
 
     try:
         client = get_client()
@@ -185,7 +264,9 @@ def generate_report_via_ai(data_context: str) -> dict:
             raw = raw.split("```json")[1].split("```")[0].strip()
         elif "```" in raw:
             raw = raw.split("```")[1].split("```")[0].strip()
-        return json.loads(raw)
+        report = json.loads(raw)
+        apply_recommendation_safety_controls(report, ctx)
+        return report
     except Exception as e:
         logger.error(f"리포트 생성 실패: {e}")
         raise

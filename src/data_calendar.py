@@ -44,6 +44,8 @@ def get_upcoming_events() -> list[str]:
         11: ["FOMC 금리결정", "미국 CPI 발표"],
         12: ["FOMC 금리결정", "미국 소매판매"],
     }
+    manual_events = _manual_event_supplements(now)
+    events = _dedupe([*manual_events, *events])
     if not events:
         events = fixed_events.get(month, ["주요 경제 이벤트 확인 필요"])
 
@@ -71,3 +73,25 @@ def build_event_context() -> dict:
         "economic_events": get_upcoming_events(),
         "earnings": get_earnings_calendar(),
     }
+
+
+def _manual_event_supplements(now: datetime) -> list[str]:
+    if now.year == 2026 and now.month == 5 and 18 <= now.day <= 24:
+        return [
+            "FOMC 의사록 공개",
+            "Nvidia 실적 발표 대기",
+            "삼성전자 노조 파업 예정",
+        ]
+    return []
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items:
+        item = str(item or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result

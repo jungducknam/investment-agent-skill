@@ -10,6 +10,7 @@ entry_filter.py — 종목 진입 타이밍 필터
 - 🔴 AVOID: 과열 — 추격 금지
 """
 import logging
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -39,6 +40,62 @@ class EntryFilterResult:
     risk_reward: float  # 리스크/리워드 비율
 
 
+def _to_finite_float(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _clean_market_rows(prices, highs=None, lows=None, volumes=None):
+    cleaned_prices = []
+    cleaned_highs = [] if highs is not None else None
+    cleaned_lows = [] if lows is not None else None
+    cleaned_volumes = [] if volumes is not None else None
+
+    price_rows = [] if prices is None else prices
+    for idx, raw_price in enumerate(price_rows):
+        price = _to_finite_float(raw_price)
+        if price is None:
+            continue
+
+        high = _to_finite_float(highs[idx]) if highs is not None and idx < len(highs) else None
+        low = _to_finite_float(lows[idx]) if lows is not None and idx < len(lows) else None
+        volume = _to_finite_float(volumes[idx]) if volumes is not None and idx < len(volumes) else None
+
+        if highs is not None and high is None:
+            continue
+        if lows is not None and low is None:
+            continue
+        if volumes is not None and volume is None:
+            continue
+
+        cleaned_prices.append(price)
+        if cleaned_highs is not None:
+            cleaned_highs.append(high)
+        if cleaned_lows is not None:
+            cleaned_lows.append(low)
+        if cleaned_volumes is not None:
+            cleaned_volumes.append(volume)
+
+    return cleaned_prices, cleaned_highs, cleaned_lows, cleaned_volumes
+
+
+def _data_limited_result(reason: str = "가격 데이터 부족") -> EntryFilterResult:
+    return EntryFilterResult(
+        signal=EntrySignal.WAIT,
+        score=50.0,
+        rsi=50.0,
+        bb_position=50.0,
+        volume_signal="중립",
+        adx=None,
+        reasons=[reason],
+        suggested_entry=None,
+        risk_reward=0.0,
+    )
+
+
 def calc_entry_filter(
     prices: list[float],
     highs: list[float] = None,
@@ -61,6 +118,10 @@ def calc_entry_filter(
     Returns:
         EntryFilterResult
     """
+    prices, highs, lows, volumes = _clean_market_rows(prices, highs, lows, volumes)
+    if not prices:
+        return _data_limited_result()
+
     current = prices[-1]
     reasons = []
     score = 50.0  # 기본 중립
@@ -154,7 +215,7 @@ def calc_entry_filter(
     adx = None
     if highs and lows and len(highs) >= 28:
         adx = _calc_adx(highs, lows, prices)
-        if adx is not None:
+        if adx is not None and math.isfinite(adx):
             if adx > 40:
                 reasons.append(f"ADX {adx:.0f} — 매우 강한 추세 (추세 추종)")
                 score += 5
@@ -207,7 +268,7 @@ def calc_entry_filter(
         rsi=round(rsi, 1),
         bb_position=round(bb_pos, 1),
         volume_signal=volume_signal,
-        adx=round(adx, 1) if adx else None,
+        adx=round(adx, 1) if adx and math.isfinite(adx) else None,
         reasons=reasons,
         suggested_entry=suggested_entry,
         risk_reward=round(risk_reward, 2),
@@ -260,11 +321,13 @@ def _calc_adx(highs: list, lows: list, closes: list, period: int = 14) -> Option
                         np.maximum(lows[:-1] - lows[1:], 0), 0)
     
     atr = np.mean(tr[-period:])
-    if atr == 0:
+    if not math.isfinite(float(atr)) or atr == 0:
         return 0.0
     plus_di = np.mean(plus_dm[-period:]) / atr * 100
     minus_di = np.mean(minus_dm[-period:]) / atr * 100
     
+    if not math.isfinite(float(plus_di)) or not math.isfinite(float(minus_di)):
+        return None
     if (plus_di + minus_di) == 0:
         return 0.0
     dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100

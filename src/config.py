@@ -22,6 +22,24 @@ MANUS_API_BASE = os.getenv("MANUS_API_BASE", "https://api.manus.im/api/llm-proxy
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", MANUS_API_BASE)
 
+# ── Google Gemini API (리포트 직접 호출용) ────────────
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_BASE = os.getenv("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta")
+GEMINI_MODEL_REPORT = os.getenv("GEMINI_MODEL_REPORT", "gemini-3.5-flash")
+GEMINI_REPORT_THINKING_LEVEL = os.getenv("GEMINI_REPORT_THINKING_LEVEL", "low")
+GEMINI_REPORT_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_REPORT_MAX_OUTPUT_TOKENS", "16000"))
+
+# ── DeepL 번역 API (뉴스 표시용) ───────────────────────
+DEEPL_API_KEY = os.getenv("DEEPL_API_KEY", "")
+DEEPL_API_URL = os.getenv("DEEPL_API_URL", "https://api-free.deepl.com/v2/translate")
+DEEPL_TARGET_LANG = os.getenv("DEEPL_TARGET_LANG", "KO")
+
+# ── 한국투자증권 Open API (국장 시세용) ───────────────
+KIS_APP_KEY = os.getenv("KIS_APP_KEY", "")
+KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "")
+KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
+KIS_BASE_URL = os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+
 # ── AI 모델 설정 ─────────────────────────────────────
 MODEL_REPORT = os.getenv("MODEL_REPORT", "gemini-2.5-flash")
 MODEL_POSITION = os.getenv("MODEL_POSITION", "gpt-4.1-nano")
